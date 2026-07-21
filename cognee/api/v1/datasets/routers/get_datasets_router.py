@@ -21,6 +21,7 @@ from cognee.modules.data.methods.create_authorized_dataset import create_authori
 from cognee.shared.logging_utils import get_logger
 from cognee.api.v1.exceptions import DataNotFoundError
 from cognee.modules.users.models import User
+from cognee.modules.users.exceptions import PermissionDeniedError
 from cognee.modules.users.methods import get_authenticated_user
 from cognee.modules.users.permissions.methods import get_all_user_permission_datasets
 from cognee.modules.graph.methods import get_formatted_graph_data
@@ -89,6 +90,13 @@ class DatasetSchemaPayloadDTO(InDTO):
 
 def get_datasets_router() -> APIRouter:
     router = APIRouter()
+
+    async def get_readable_dataset(dataset_id: UUID, user: User):
+        try:
+            authorized_datasets = await get_authorized_existing_datasets([dataset_id], "read", user)
+        except PermissionDeniedError:
+            return None
+        return authorized_datasets[0] if authorized_datasets else None
 
     @router.get("", response_model=list[DatasetDTO])
     async def get_datasets(user: User = Depends(get_authenticated_user)):
@@ -368,15 +376,15 @@ def get_datasets_router() -> APIRouter:
         from cognee.modules.data.methods import get_dataset_data
 
         # Verify user has permission to read dataset
-        dataset = await get_authorized_existing_datasets([dataset_id], "read", user)
+        dataset = await get_readable_dataset(dataset_id, user)
 
         if dataset is None:
             return JSONResponse(
                 status_code=404,
-                content=ErrorResponseDTO(f"Dataset ({str(dataset_id)}) not found."),
+                content={"message": f"Dataset ({str(dataset_id)}) not found."},
             )
 
-        dataset_id = dataset[0].id
+        dataset_id = dataset.id
 
         dataset_data = await get_dataset_data(dataset_id=dataset_id)
 
@@ -519,31 +527,22 @@ def get_datasets_router() -> APIRouter:
             },
         )
 
-        from cognee.modules.data.methods import get_data
         from cognee.modules.data.methods import get_dataset_data
 
         # Verify user has permission to read dataset
-        dataset = await get_authorized_existing_datasets([dataset_id], "read", user)
+        dataset = await get_readable_dataset(dataset_id, user)
 
         if dataset is None:
             return JSONResponse(
                 status_code=404, content={"detail": f"Dataset ({dataset_id}) not found."}
             )
 
-        dataset_data = await get_dataset_data(dataset[0].id)
+        dataset_data = await get_dataset_data(dataset.id)
 
         if dataset_data is None:
             raise DataNotFoundError(message=f"No data found in dataset ({dataset_id}).")
 
-        matching_data = [data for data in dataset_data if data.id == data_id]
-
-        # Check if matching_data contains an element
-        if len(matching_data) == 0:
-            raise DataNotFoundError(
-                message=f"Data ({data_id}) not found in dataset ({dataset_id})."
-            )
-
-        data = await get_data(user.id, data_id)
+        data = next((data for data in dataset_data if data.id == data_id), None)
 
         if data is None:
             raise DataNotFoundError(

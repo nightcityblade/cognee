@@ -8,6 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from cognee.modules.users.exceptions import PermissionDeniedError
 from cognee.modules.users.methods import get_authenticated_user
 
 
@@ -65,10 +66,16 @@ def _patch_raw_download_dependencies(
 
     import cognee.modules.data.methods as data_methods_module
 
+    data = SimpleNamespace(
+        id=data_id,
+        raw_data_location=raw_data_location,
+        name=name,
+        mime_type=mime_type,
+    )
     monkeypatch.setattr(
         data_methods_module,
         "get_dataset_data",
-        AsyncMock(return_value=[SimpleNamespace(id=data_id)]),
+        AsyncMock(return_value=[data]),
     )
     monkeypatch.setattr(
         data_methods_module,
@@ -82,6 +89,14 @@ def _patch_raw_download_dependencies(
             )
         ),
     )
+
+
+def test_inaccessible_dataset_returns_404(client, monkeypatch):
+    router = __import__("cognee.api.v1.datasets.routers.get_datasets_router", fromlist=[""])
+
+    lookup = AsyncMock(side_effect=PermissionDeniedError())
+    monkeypatch.setattr(router, "get_authorized_existing_datasets", lookup)
+    assert client.get(f"/api/v1/datasets/{uuid.uuid4()}/data").status_code == 404
 
 
 def test_get_raw_data_local_file_downloads_bytes(client, monkeypatch, tmp_path):
@@ -105,6 +120,9 @@ def test_get_raw_data_local_file_downloads_bytes(client, monkeypatch, tmp_path):
     response = client.get(f"/api/v1/datasets/{dataset_id}/data/{data_id}/raw")
     assert response.status_code == 200
     assert response.content == content
+    import cognee.modules.data.methods as data_methods_module
+
+    data_methods_module.get_data.assert_not_awaited()
 
 
 def test_get_raw_data_s3_streams_bytes_without_s3_dependency(client, monkeypatch):
