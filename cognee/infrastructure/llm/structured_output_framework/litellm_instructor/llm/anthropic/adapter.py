@@ -105,11 +105,18 @@ class AnthropicAdapter(GenericAPIAdapter):
                 return await self.aclient(
                     model=self.model,
                     max_retries=2,
+                    system=[
+                        {
+                            "type": "text",
+                            "text": system_prompt,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
                     messages=[
                         {
                             "role": "user",
                             "content": f"""Use the given format to extract information
-                    from the following input: {text_input}. {system_prompt}""",
+                    from the following input: {text_input}""",
                         }
                     ],
                     response_model=response_model,
